@@ -218,40 +218,373 @@ const Engine = (() => {
     return (px - cx) ** 2 + (py - cy) ** 2 <= r * r;
   }
 
-  // ── Sound (simple Web Audio beeps) ──
+  // ══════════════════════════════════════════════
+  //   SOUND SYSTEM (Web Audio — no external files)
+  // ══════════════════════════════════════════════
+
   let audioCtx = null;
+  let masterGain = null;
+  let sfxGain = null;
+  let bgmGain = null;
+  let bgmPlaying = null;     // current BGM track name
+  let bgmNodes = [];          // active BGM oscillators/sources
+  let bgmLoopTimer = null;
+  let soundEnabled = true;    // user toggle
+  let bgmVolume = 0.25;
+  let sfxVolume = 0.5;
+
   function getAudio() {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      masterGain = audioCtx.createGain();
+      masterGain.gain.value = 1;
+      masterGain.connect(audioCtx.destination);
+      sfxGain = audioCtx.createGain();
+      sfxGain.gain.value = sfxVolume;
+      sfxGain.connect(masterGain);
+      bgmGain = audioCtx.createGain();
+      bgmGain.gain.value = bgmVolume;
+      bgmGain.connect(masterGain);
+    }
+    // Resume on iOS (requires user gesture)
+    if (audioCtx.state === 'suspended') audioCtx.resume();
     return audioCtx;
   }
 
-  function playTone(freq, duration = 0.15, type = 'sine', vol = 0.3) {
+  // ── Play a single tone ──
+  function playTone(freq, duration = 0.15, type = 'sine', vol = 0.4, dest = null) {
+    if (!soundEnabled) return;
     try {
       const ac = getAudio();
       const osc = ac.createOscillator();
       const gain = ac.createGain();
       osc.type = type;
       osc.frequency.value = freq;
-      gain.gain.value = vol;
-      gain.gain.exponentialRampToValueAtTime(0.01, ac.currentTime + duration);
+      gain.gain.setValueAtTime(vol, ac.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + duration);
       osc.connect(gain);
-      gain.connect(ac.destination);
+      gain.connect(dest || sfxGain);
       osc.start();
-      osc.stop(ac.currentTime + duration);
+      osc.stop(ac.currentTime + duration + 0.05);
     } catch (e) {}
   }
 
-  function sfxTap() { playTone(800, 0.08, 'sine', 0.2); }
-  function sfxSuccess() { playTone(523, 0.1); setTimeout(() => playTone(659, 0.1), 100); setTimeout(() => playTone(784, 0.2), 200); }
-  function sfxCoin() { playTone(1200, 0.1, 'square', 0.15); setTimeout(() => playTone(1600, 0.15, 'square', 0.15), 80); }
-  function sfxHeal() { playTone(400, 0.3, 'sine', 0.2); setTimeout(() => playTone(600, 0.3, 'sine', 0.2), 200); }
-  function sfxBad() { playTone(200, 0.3, 'sawtooth', 0.15); }
+  // ── Play a chord (multiple freqs at once) ──
+  function playChord(freqs, duration, type = 'sine', vol = 0.15, dest = null) {
+    freqs.forEach(f => playTone(f, duration, type, vol / freqs.length, dest));
+  }
+
+  // ── Noise generator (for surgical ambience, water, etc.) ──
+  function playNoise(duration, vol = 0.05, filter = 800, dest = null) {
+    if (!soundEnabled) return;
+    try {
+      const ac = getAudio();
+      const bufferSize = ac.sampleRate * duration;
+      const buffer = ac.createBuffer(1, bufferSize, ac.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+      const source = ac.createBufferSource();
+      source.buffer = buffer;
+      const bpFilter = ac.createBiquadFilter();
+      bpFilter.type = 'lowpass';
+      bpFilter.frequency.value = filter;
+      const gain = ac.createGain();
+      gain.gain.setValueAtTime(vol, ac.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + duration);
+      source.connect(bpFilter);
+      bpFilter.connect(gain);
+      gain.connect(dest || sfxGain);
+      source.start();
+    } catch (e) {}
+  }
+
+  // ══════════════════════════
+  //   SOUND EFFECTS
+  // ══════════════════════════
+
+  function sfxTap() {
+    playTone(900, 0.06, 'sine', 0.25);
+    playTone(1200, 0.04, 'sine', 0.1);
+  }
+
+  function sfxSuccess() {
+    // Happy ascending arpeggio
+    const notes = [523, 659, 784, 1047];
+    notes.forEach((f, i) => {
+      setTimeout(() => playTone(f, 0.2, 'sine', 0.3), i * 100);
+    });
+    setTimeout(() => playChord([523, 659, 784], 0.5, 'sine', 0.2), 400);
+  }
+
+  function sfxCoin() {
+    playTone(1200, 0.08, 'square', 0.15);
+    setTimeout(() => playTone(1600, 0.12, 'square', 0.12), 60);
+    setTimeout(() => playTone(2000, 0.08, 'square', 0.08), 120);
+  }
+
+  function sfxHeal() {
+    // Warm healing shimmer
+    playChord([400, 500, 600], 0.4, 'sine', 0.2);
+    setTimeout(() => playChord([500, 600, 750], 0.5, 'sine', 0.2), 250);
+    setTimeout(() => playTone(800, 0.3, 'sine', 0.15), 500);
+  }
+
+  function sfxBad() {
+    // Worried descending
+    playTone(350, 0.2, 'sawtooth', 0.12);
+    setTimeout(() => playTone(280, 0.25, 'sawtooth', 0.1), 150);
+    setTimeout(() => playTone(200, 0.3, 'sawtooth', 0.08), 300);
+  }
+
+  function sfxDrop() {
+    // Satisfying drop/place sound
+    playTone(600, 0.08, 'sine', 0.3);
+    setTimeout(() => playTone(800, 0.1, 'sine', 0.2), 50);
+    playNoise(0.1, 0.08, 2000);
+  }
+
+  function sfxPickup() {
+    // Lift/grab sound
+    playTone(500, 0.06, 'sine', 0.2);
+    playTone(700, 0.06, 'sine', 0.12);
+  }
+
+  function sfxAnimalHappy() {
+    // Cheerful bark/meow-like
+    playTone(600, 0.1, 'sine', 0.2);
+    setTimeout(() => playTone(750, 0.12, 'sine', 0.25), 80);
+    setTimeout(() => playTone(600, 0.08, 'sine', 0.15), 180);
+  }
+
+  function sfxAnimalWhimper() {
+    // Sad descending whine
+    const ac = getAudio();
+    if (!ac || !soundEnabled) return;
+    try {
+      const osc = ac.createOscillator();
+      const gain = ac.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(500, ac.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(250, ac.currentTime + 0.4);
+      gain.gain.setValueAtTime(0.2, ac.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.4);
+      osc.connect(gain);
+      gain.connect(sfxGain);
+      osc.start();
+      osc.stop(ac.currentTime + 0.45);
+    } catch (e) {}
+  }
+
+  function sfxSurgery() {
+    // Metallic clink
+    playTone(3000, 0.04, 'square', 0.08);
+    playTone(4500, 0.03, 'square', 0.05);
+    playNoise(0.08, 0.06, 5000);
+  }
+
+  function sfxHeartbeat() {
+    // Thump-thump
+    playTone(60, 0.12, 'sine', 0.3);
+    setTimeout(() => playTone(50, 0.15, 'sine', 0.25), 150);
+  }
+
+  function sfxPageTurn() {
+    playNoise(0.15, 0.06, 3000);
+  }
+
+  function sfxDayEnd() {
+    // Gentle wind-down
+    const notes = [784, 659, 523, 392];
+    notes.forEach((f, i) => {
+      setTimeout(() => playTone(f, 0.35, 'sine', 0.15), i * 200);
+    });
+  }
+
+  // ══════════════════════════════════════════
+  //   BACKGROUND MUSIC (procedural loops)
+  // ══════════════════════════════════════════
+
+  function stopBGM() {
+    if (bgmLoopTimer) { clearInterval(bgmLoopTimer); bgmLoopTimer = null; }
+    bgmNodes.forEach(n => { try { n.stop(); } catch (e) {} });
+    bgmNodes = [];
+    bgmPlaying = null;
+  }
+
+  function _bgmNote(freq, startTime, duration, type = 'sine', vol = 0.08) {
+    if (!soundEnabled) return;
+    try {
+      const ac = getAudio();
+      const osc = ac.createOscillator();
+      const gain = ac.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, startTime);
+      gain.gain.linearRampToValueAtTime(vol, startTime + 0.05);
+      gain.gain.setValueAtTime(vol, startTime + duration - 0.1);
+      gain.gain.linearRampToValueAtTime(0, startTime + duration);
+      osc.connect(gain);
+      gain.connect(bgmGain);
+      osc.start(startTime);
+      osc.stop(startTime + duration + 0.1);
+      bgmNodes.push(osc);
+    } catch (e) {}
+  }
+
+  // Title: upbeat cheerful loop
+  function bgmTitle() {
+    if (bgmPlaying === 'title') return;
+    stopBGM();
+    bgmPlaying = 'title';
+    const melody = [523, 587, 659, 784, 659, 587, 523, 494, 523, 587, 659, 784, 880, 784, 659, 523];
+    const bass = [262, 262, 330, 330, 349, 349, 262, 262, 262, 262, 330, 330, 349, 349, 262, 262];
+    const noteLen = 0.28;
+    function playLoop() {
+      if (bgmPlaying !== 'title' || !soundEnabled) return;
+      const ac = getAudio();
+      const now = ac.currentTime + 0.05;
+      melody.forEach((f, i) => {
+        _bgmNote(f, now + i * noteLen, noteLen * 0.9, 'sine', 0.06);
+        _bgmNote(bass[i], now + i * noteLen, noteLen * 0.9, 'triangle', 0.04);
+      });
+      // Soft pad chord
+      [262, 330, 392].forEach(f => _bgmNote(f, now, melody.length * noteLen, 'sine', 0.02));
+    }
+    playLoop();
+    bgmLoopTimer = setInterval(playLoop, melody.length * noteLen * 1000);
+  }
+
+  // Clinic: calm, warm ambient
+  function bgmClinic() {
+    if (bgmPlaying === 'clinic') return;
+    stopBGM();
+    bgmPlaying = 'clinic';
+    // Gentle arpeggiated pattern
+    const pattern = [262, 330, 392, 523, 392, 330, 262, 220, 262, 294, 349, 440, 349, 294, 262, 220];
+    const noteLen = 0.45;
+    function playLoop() {
+      if (bgmPlaying !== 'clinic' || !soundEnabled) return;
+      const ac = getAudio();
+      const now = ac.currentTime + 0.05;
+      pattern.forEach((f, i) => {
+        _bgmNote(f, now + i * noteLen, noteLen * 1.2, 'sine', 0.04);
+      });
+      // Warm pad underneath
+      [196, 262, 330].forEach(f => _bgmNote(f, now, pattern.length * noteLen, 'sine', 0.015));
+    }
+    playLoop();
+    bgmLoopTimer = setInterval(playLoop, pattern.length * noteLen * 1000);
+  }
+
+  // Checkup: curious, lighthearted
+  function bgmCheckup() {
+    if (bgmPlaying === 'checkup') return;
+    stopBGM();
+    bgmPlaying = 'checkup';
+    const melody = [392, 440, 494, 523, 494, 440, 392, 349, 330, 349, 392, 440, 523, 494, 440, 392];
+    const noteLen = 0.35;
+    function playLoop() {
+      if (bgmPlaying !== 'checkup' || !soundEnabled) return;
+      const ac = getAudio();
+      const now = ac.currentTime + 0.05;
+      melody.forEach((f, i) => {
+        _bgmNote(f, now + i * noteLen, noteLen * 0.8, 'sine', 0.04);
+      });
+      // Light bass
+      [196, 220, 196, 175].forEach((f, i) => {
+        _bgmNote(f, now + i * noteLen * 4, noteLen * 3.8, 'triangle', 0.03);
+      });
+    }
+    playLoop();
+    bgmLoopTimer = setInterval(playLoop, melody.length * noteLen * 1000);
+  }
+
+  // Surgery: tense, focused
+  function bgmSurgery() {
+    if (bgmPlaying === 'surgery') return;
+    stopBGM();
+    bgmPlaying = 'surgery';
+    const noteLen = 0.6;
+    const pattern = [220, 233, 220, 208, 196, 208, 220, 233, 247, 233, 220, 208, 196, 185, 196, 208];
+    function playLoop() {
+      if (bgmPlaying !== 'surgery' || !soundEnabled) return;
+      const ac = getAudio();
+      const now = ac.currentTime + 0.05;
+      pattern.forEach((f, i) => {
+        _bgmNote(f, now + i * noteLen, noteLen * 1.1, 'sine', 0.035);
+      });
+      // Deep drone
+      _bgmNote(110, now, pattern.length * noteLen, 'triangle', 0.03);
+      _bgmNote(165, now, pattern.length * noteLen, 'sine', 0.015);
+      // Soft heartbeat rhythm
+      for (let i = 0; i < pattern.length; i += 2) {
+        _bgmNote(55, now + i * noteLen, 0.12, 'sine', 0.04);
+        _bgmNote(50, now + i * noteLen + 0.15, 0.15, 'sine', 0.03);
+      }
+    }
+    playLoop();
+    bgmLoopTimer = setInterval(playLoop, pattern.length * noteLen * 1000);
+  }
+
+  // Result: celebratory
+  function bgmResult() {
+    if (bgmPlaying === 'result') return;
+    stopBGM();
+    bgmPlaying = 'result';
+    const melody = [523, 659, 784, 880, 784, 659, 523, 659, 784, 1047, 880, 784, 659, 523, 587, 523];
+    const noteLen = 0.25;
+    function playLoop() {
+      if (bgmPlaying !== 'result' || !soundEnabled) return;
+      const ac = getAudio();
+      const now = ac.currentTime + 0.05;
+      melody.forEach((f, i) => {
+        _bgmNote(f, now + i * noteLen, noteLen * 0.85, 'sine', 0.05);
+      });
+      [262, 330, 392].forEach(f => _bgmNote(f, now, melody.length * noteLen, 'triangle', 0.02));
+    }
+    playLoop();
+    bgmLoopTimer = setInterval(playLoop, melody.length * noteLen * 1000);
+  }
+
+  // Night: dreamy, peaceful
+  function bgmNight() {
+    if (bgmPlaying === 'night') return;
+    stopBGM();
+    bgmPlaying = 'night';
+    const melody = [392, 330, 294, 262, 220, 262, 294, 330, 262, 220, 196, 220, 262, 294, 330, 262];
+    const noteLen = 0.6;
+    function playLoop() {
+      if (bgmPlaying !== 'night' || !soundEnabled) return;
+      const ac = getAudio();
+      const now = ac.currentTime + 0.05;
+      melody.forEach((f, i) => {
+        _bgmNote(f, now + i * noteLen, noteLen * 1.3, 'sine', 0.035);
+      });
+      // Dreamy pad
+      [131, 196, 262].forEach(f => _bgmNote(f, now, melody.length * noteLen, 'sine', 0.015));
+    }
+    playLoop();
+    bgmLoopTimer = setInterval(playLoop, melody.length * noteLen * 1000);
+  }
+
+  // Toggle sound
+  function toggleSound() {
+    soundEnabled = !soundEnabled;
+    if (!soundEnabled) stopBGM();
+    return soundEnabled;
+  }
+
+  function isSoundEnabled() { return soundEnabled; }
 
   return {
     W, H, init, ctx: () => ctx, canvas: () => canvas,
     setScene, tween, updateTweens,
     roundRect, drawButton, hitRect, hitCircle,
     sfxTap, sfxSuccess, sfxCoin, sfxHeal, sfxBad,
+    sfxDrop, sfxPickup, sfxAnimalHappy, sfxAnimalWhimper,
+    sfxSurgery, sfxHeartbeat, sfxPageTurn, sfxDayEnd,
+    bgmTitle, bgmClinic, bgmCheckup, bgmSurgery, bgmResult, bgmNight,
+    stopBGM, toggleSound, isSoundEnabled,
     toGame, ease,
   };
 })();

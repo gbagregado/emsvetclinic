@@ -134,6 +134,7 @@
       // Check for save
       const saved = load();
       this.hasSave = !!saved;
+      Engine.bgmTitle();
     },
 
     update(dt) {
@@ -203,9 +204,24 @@
       if (this.hasSave) {
         Engine.drawButton(ctx, W / 2 - 100, 690, 200, 55, '▶️  Continue', '#ff6b6b', '#fff');
       }
+
+      // Sound toggle
+      const soundOn = Engine.isSoundEnabled();
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      Engine.roundRect(ctx, W - 55, 15, 42, 42, 12);
+      ctx.fill();
+      ctx.font = '22px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(soundOn ? '🔊' : '🔇', W - 34, 43);
     },
 
     onTap(x, y) {
+      // Sound toggle
+      if (Engine.hitRect(x, y, W - 55, 15, 42, 42)) {
+        const on = Engine.toggleSound();
+        if (on) Engine.bgmTitle();
+        return;
+      }
       if (Engine.hitRect(x, y, W / 2 - 100, 620, 200, 55)) {
         Engine.sfxTap();
         state = { coins: 0, day: 1, treated: 0, reputation: 0, totalTreated: 0 };
@@ -241,6 +257,7 @@
       this.charIndex = 0;
       this.displayText = '';
       this.timer = 0;
+      Engine.bgmClinic();
     },
 
     update(dt) {
@@ -323,6 +340,7 @@
       }
       if (Engine.hitRect(x, y, W / 2 - 80, 620, 160, 50)) {
         Engine.sfxTap();
+        Engine.sfxPageTurn();
         this.step++;
         if (this.step >= this.lines.length) {
           Engine.setScene(ClinicScene);
@@ -356,6 +374,7 @@
       this.emsBubble = EMS_BUBBLES[Math.floor(Math.random() * EMS_BUBBLES.length)];
       this.emsBubbleTimer = 3;
       save(state);
+      Engine.bgmClinic();
     },
 
     update(dt) {
@@ -396,6 +415,13 @@
       ctx.fillStyle = 'rgba(255,255,255,0.9)';
       Engine.roundRect(ctx, 10, 8, W - 20, 44, 12);
       ctx.fill();
+
+      // Sound toggle in HUD
+      const soundOn = Engine.isSoundEnabled();
+      ctx.font = '18px sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(soundOn ? '🔊' : '🔇', W - 14, 36);
+
       ctx.fillStyle = '#3a4a48';
       ctx.font = 'bold 15px -apple-system, sans-serif';
       ctx.textAlign = 'left';
@@ -468,6 +494,12 @@
     },
 
     onTap(x, y) {
+      // Sound toggle in HUD
+      if (Engine.hitRect(x, y, W - 40, 8, 40, 44)) {
+        const on = Engine.toggleSound();
+        if (on) Engine.bgmClinic();
+        return;
+      }
       // End day button
       if (state.treated >= this.maxForDay && this.animals.length === 0) {
         if (Engine.hitRect(x, y, W / 2 - 90, H - 100, 180, 50)) {
@@ -538,6 +570,7 @@
       }));
       this.draggingTool = null;
       this.dropZoneHover = false;
+      Engine.bgmCheckup();
     },
 
     update(dt) {
@@ -719,13 +752,14 @@
       this.dropZoneHover = false;
       this.examProgress++;
       this.currentToolIdx = Math.min(this.currentToolIdx + 1, this.tools.length - 1);
-      Engine.sfxTap();
+      Engine.sfxDrop();
       this.toolUseAnim = { tool: t.name, x: 180, y: H * 0.35 - 20, timer: 1 };
       if (this.examProgress >= 3) {
         setTimeout(() => {
           this.phase = 'diagnosis';
           this.diagnosisRevealed = true;
           Engine.sfxBad();
+          Engine.sfxAnimalWhimper();
         }, 800);
       }
     },
@@ -737,6 +771,7 @@
         if (!t.used && Engine.hitCircle(x, y, t.x, t.y, 35)) {
           t.dragging = true;
           this.draggingTool = t;
+          Engine.sfxPickup();
           return t;
         }
       }
@@ -817,6 +852,7 @@
       this.bottleY = H + 50;
       this.dropZoneHover = false;
       Engine.tween(this, { bottleY: H * 0.55 }, 0.6, 'easeOut');
+      Engine.bgmCheckup();
     },
 
     update(dt) {
@@ -922,6 +958,7 @@
     onDragStart(x, y) {
       if (!this.applied && Engine.hitCircle(x, y, this.bottleX, this.bottleY, 40)) {
         this.draggingBottle = true;
+        Engine.sfxPickup();
         return 'bottle';
       }
       return null;
@@ -993,6 +1030,7 @@
       this.surgeryProgress = 0;
       this.draggingTool = null;
       this.dropZoneHover = false;
+      Engine.bgmSurgery();
     },
 
     update(dt) {
@@ -1135,7 +1173,8 @@
       this.dropZoneHover = false;
       this.surgeryProgress++;
       this.step++;
-      Engine.sfxTap();
+      Engine.sfxSurgery();
+      Engine.sfxDrop();
       for (let s = 0; s < 5; s++) {
         this.sparkles.push({
           x: W / 2 + (Math.random() - 0.5) * 60,
@@ -1159,6 +1198,7 @@
         if (!t.used && i === this.step && Engine.hitCircle(x, y, t.x, t.y, 35)) {
           t.dragging = true;
           this.draggingTool = t;
+          Engine.sfxPickup();
           return t;
         }
       }
@@ -1220,6 +1260,8 @@
     state.totalTreated++;
     state.reputation += 1;
     save(state);
+    Engine.sfxCoin();
+    Engine.sfxAnimalHappy();
     Engine.setScene(ResultScene);
     ResultScene.patient = patient;
     ResultScene.reward = reward;
@@ -1238,6 +1280,7 @@
       this.time = 0;
       this.hearts = [];
       if (this.patient) this.patient.mood = 'happy';
+      Engine.bgmResult();
       // Spawn floating hearts
       for (let i = 0; i < 8; i++) {
         this.hearts.push({
@@ -1339,6 +1382,8 @@
 
     enter() {
       this.time = 0;
+      Engine.sfxDayEnd();
+      Engine.bgmNight();
     },
 
     update(dt) {
