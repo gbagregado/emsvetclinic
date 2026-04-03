@@ -530,12 +530,14 @@
       this.tools = checkupTools.map((t, i) => ({
         name: t,
         x: 50 + i * 130,
-        y: H - 100,
+        y: H - 80,
         originX: 50 + i * 130,
-        originY: H - 100,
+        originY: H - 80,
         used: false,
         dragging: false,
       }));
+      this.draggingTool = null;
+      this.dropZoneHover = false;
     },
 
     update(dt) {
@@ -623,6 +625,23 @@
         ctx.textAlign = 'center';
         ctx.fillText(`Examining... ${this.examProgress}/3`, W / 2, H * 0.53 + 12);
 
+        // Drop zone highlight (patient area)
+        if (this.draggingTool) {
+          const dzAlpha = this.dropZoneHover ? 0.35 : 0.12;
+          ctx.fillStyle = `rgba(78,205,196,${dzAlpha})`;
+          ctx.strokeStyle = `rgba(78,205,196,${dzAlpha + 0.3})`;
+          ctx.lineWidth = 3;
+          ctx.setLineDash([8, 4]);
+          Engine.roundRect(ctx, 85, H * 0.2 - 10, 220, 140, 16);
+          ctx.fill();
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = 'rgba(78,205,196,0.9)';
+          ctx.font = 'bold 12px -apple-system, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('Drop here!', 195, H * 0.2 + 120);
+        }
+
         // Tool tray
         ctx.fillStyle = 'rgba(255,255,255,0.9)';
         Engine.roundRect(ctx, 15, H - 140, W - 30, 120, 16);
@@ -630,13 +649,13 @@
         ctx.fillStyle = '#5a9a90';
         ctx.font = 'bold 13px -apple-system, sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('👆 Tap a tool to examine', W / 2, H - 122);
+        ctx.fillText('🔀 Drag tool to patient (or tap)', W / 2, H - 122);
 
         this.tools.forEach((t, i) => {
+          if (t.dragging) return; // drawn separately on top
           if (t.used) {
             ctx.globalAlpha = 0.3;
           } else if (i === this.currentToolIdx) {
-            // Highlight next tool
             ctx.fillStyle = `rgba(78,205,196,${this.toolHighlight * 0.3})`;
             ctx.beginPath();
             ctx.arc(t.x, t.y, 35, 0, Math.PI * 2);
@@ -644,13 +663,18 @@
           }
           GFX.drawToolIcon(ctx, t.x, t.y, t.name, 1.6);
           ctx.globalAlpha = 1;
-
-          // Label
           ctx.fillStyle = '#5a7a78';
           ctx.font = '10px -apple-system, sans-serif';
           ctx.textAlign = 'center';
           ctx.fillText(t.name, t.x, t.y + 35);
         });
+
+        // Draw dragging tool on top
+        if (this.draggingTool && this.draggingTool.dragging) {
+          ctx.globalAlpha = 0.85;
+          GFX.drawToolIcon(ctx, this.draggingTool.x, this.draggingTool.y, this.draggingTool.name, 2.2);
+          ctx.globalAlpha = 1;
+        }
 
       } else if (this.phase === 'diagnosis') {
         // Diagnosis panel
@@ -688,6 +712,56 @@
       Engine.drawButton(ctx, 15, 10, 70, 36, '← Back', '#ccc', '#666');
     },
 
+    _useTool(t) {
+      t.used = true;
+      t.dragging = false;
+      this.draggingTool = null;
+      this.dropZoneHover = false;
+      this.examProgress++;
+      this.currentToolIdx = Math.min(this.currentToolIdx + 1, this.tools.length - 1);
+      Engine.sfxTap();
+      this.toolUseAnim = { tool: t.name, x: 180, y: H * 0.35 - 20, timer: 1 };
+      if (this.examProgress >= 3) {
+        setTimeout(() => {
+          this.phase = 'diagnosis';
+          this.diagnosisRevealed = true;
+          Engine.sfxBad();
+        }, 800);
+      }
+    },
+
+    // ── Drag & Drop ──
+    onDragStart(x, y) {
+      if (this.phase !== 'examine') return null;
+      for (const t of this.tools) {
+        if (!t.used && Engine.hitCircle(x, y, t.x, t.y, 35)) {
+          t.dragging = true;
+          this.draggingTool = t;
+          return t;
+        }
+      }
+      return null;
+    },
+
+    onDrag(target, x, y) {
+      target.x = x;
+      target.y = y;
+      this.dropZoneHover = Engine.hitRect(x, y, 85, H * 0.2 - 10, 220, 140);
+    },
+
+    onDrop(target, x, y) {
+      if (this.dropZoneHover && !target.used) {
+        this._useTool(target);
+      } else {
+        // Snap back
+        target.x = target.originX;
+        target.y = target.originY;
+        target.dragging = false;
+        this.draggingTool = null;
+        this.dropZoneHover = false;
+      }
+    },
+
     onTap(x, y) {
       // Back
       if (Engine.hitRect(x, y, 15, 10, 70, 36)) {
@@ -698,29 +772,10 @@
       }
 
       if (this.phase === 'examine') {
-        // Tap tools
+        // Tap tools (fallback)
         this.tools.forEach((t, i) => {
-          if (!t.used && Engine.hitCircle(x, y, t.x, t.y, 35)) {
-            Engine.sfxTap();
-            t.used = true;
-            this.examProgress++;
-            this.currentToolIdx = Math.min(this.currentToolIdx + 1, this.tools.length - 1);
-
-            // Show tool animation near patient
-            this.toolUseAnim = {
-              tool: t.name,
-              x: 180,
-              y: H * 0.35 - 20,
-              timer: 1,
-            };
-
-            if (this.examProgress >= 3) {
-              setTimeout(() => {
-                this.phase = 'diagnosis';
-                this.diagnosisRevealed = true;
-                Engine.sfxBad();
-              }, 800);
-            }
+          if (!t.used && !t.dragging && Engine.hitCircle(x, y, t.x, t.y, 35)) {
+            this._useTool(t);
           }
         });
       } else if (this.phase === 'diagnosis') {
@@ -750,13 +805,18 @@
     applied: false,
     healAnim: 0,
 
+    draggingBottle: false,
+
     enter() {
       this.phase = 0;
       this.time = 0;
       this.applied = false;
       this.healAnim = 0;
+      this.draggingBottle = false;
+      this.bottleX = W / 2;
       this.bottleY = H + 50;
-      Engine.tween(this, { bottleY: H * 0.5 }, 0.6, 'easeOut');
+      this.dropZoneHover = false;
+      Engine.tween(this, { bottleY: H * 0.55 }, 0.6, 'easeOut');
     },
 
     update(dt) {
@@ -792,13 +852,30 @@
         }
       }
 
-      // Medicine bottle floating
+      // Drop zone highlight when dragging
+      if (this.draggingBottle && !this.applied) {
+        const dzAlpha = this.dropZoneHover ? 0.35 : 0.12;
+        ctx.fillStyle = `rgba(78,205,196,${dzAlpha})`;
+        ctx.strokeStyle = `rgba(78,205,196,${dzAlpha + 0.3})`;
+        ctx.lineWidth = 3;
+        ctx.setLineDash([8, 4]);
+        Engine.roundRect(ctx, 100, H * 0.2, 200, 130, 16);
+        ctx.fill();
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = 'rgba(78,205,196,0.9)';
+        ctx.font = 'bold 12px -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Drop medicine here!', 200, H * 0.2 + 120);
+      }
+
+      // Medicine bottle
       if (!this.applied) {
         GFX.drawMedicineBottle(ctx, this.bottleX, this.bottleY, 2.5);
         ctx.fillStyle = '#4ecdc4';
         ctx.font = 'bold 16px -apple-system, sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('👆 Tap to give medicine', W / 2, H * 0.65);
+        ctx.fillText('🔀 Drag medicine to patient (or tap)', W / 2, H * 0.7);
       }
 
       // Healing particles
@@ -832,13 +909,48 @@
       GFX.drawEms(ctx, 50, H * 0.4, 0.7, 'happy');
     },
 
+    _applyMedicine() {
+      this.applied = true;
+      this.draggingBottle = false;
+      this.dropZoneHover = false;
+      Engine.sfxHeal();
+      Engine.tween(this, { bottleX: 195, bottleY: H * 0.35 - 40 }, 0.3, 'easeIn', () => {
+        Engine.tween(this, { bottleY: -50 }, 0.4, 'easeIn');
+      });
+    },
+
+    onDragStart(x, y) {
+      if (!this.applied && Engine.hitCircle(x, y, this.bottleX, this.bottleY, 40)) {
+        this.draggingBottle = true;
+        return 'bottle';
+      }
+      return null;
+    },
+
+    onDrag(target, x, y) {
+      if (target === 'bottle' && !this.applied) {
+        this.bottleX = x;
+        this.bottleY = y;
+        this.dropZoneHover = Engine.hitRect(x, y, 100, H * 0.2, 200, 130);
+      }
+    },
+
+    onDrop(target, x, y) {
+      if (target === 'bottle' && !this.applied) {
+        if (this.dropZoneHover) {
+          this._applyMedicine();
+        } else {
+          // Snap back
+          this.draggingBottle = false;
+          this.dropZoneHover = false;
+          Engine.tween(this, { bottleX: W / 2, bottleY: H * 0.55 }, 0.3, 'easeOut');
+        }
+      }
+    },
+
     onTap(x, y) {
-      if (!this.applied && this.bottleY < H) {
-        this.applied = true;
-        Engine.sfxHeal();
-        Engine.tween(this, { bottleY: H * 0.35 - 40 }, 0.4, 'easeIn', () => {
-          Engine.tween(this, { bottleY: -50 }, 0.5, 'easeIn');
-        });
+      if (!this.applied && this.bottleY < H && Engine.hitCircle(x, y, this.bottleX, this.bottleY, 40)) {
+        this._applyMedicine();
         return;
       }
       if (this.phase === 2 && Engine.hitRect(x, y, W / 2 - 80, H * 0.7, 160, 50)) {
@@ -872,12 +984,15 @@
       this.tools = cond.tools.map((t, i) => ({
         name: t,
         x: 40 + i * 75,
-        y: H - 70,
+        y: H - 65,
         originX: 40 + i * 75,
-        originY: H - 70,
+        originY: H - 65,
         used: false,
+        dragging: false,
       }));
       this.surgeryProgress = 0;
+      this.draggingTool = null;
+      this.dropZoneHover = false;
     },
 
     update(dt) {
@@ -925,14 +1040,33 @@
         ctx.fill();
       }
 
+      // Drop zone for surgery area
+      if (this.draggingTool && this.step < steps.length) {
+        const dzAlpha = this.dropZoneHover ? 0.3 : 0.1;
+        ctx.fillStyle = `rgba(78,205,196,${dzAlpha})`;
+        ctx.strokeStyle = `rgba(78,205,196,${dzAlpha + 0.3})`;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        Engine.roundRect(ctx, 40, 100, W - 80, 280, 12);
+        ctx.fill();
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
       // Tool tray
       ctx.fillStyle = 'rgba(40,60,70,0.9)';
       Engine.roundRect(ctx, 10, H - 110, W - 20, 100, 14);
       ctx.fill();
 
       if (this.step < steps.length) {
+        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+        ctx.font = '10px -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('🔀 Drag tool to surgery area (or tap)', W / 2, H - 96);
+
         const highlight = Math.sin(this.time * 5) * 0.3 + 0.7;
         this.tools.forEach((t, i) => {
+          if (t.dragging) return; // drawn on top
           if (t.used) {
             ctx.globalAlpha = 0.25;
           } else if (i === this.step) {
@@ -943,12 +1077,18 @@
           }
           GFX.drawToolIcon(ctx, t.x, t.y, t.name, 1.4);
           ctx.globalAlpha = 1;
-          // Label
           ctx.fillStyle = 'rgba(255,255,255,0.6)';
           ctx.font = '9px -apple-system, sans-serif';
           ctx.textAlign = 'center';
           ctx.fillText(t.name, t.x, t.y + 30);
         });
+
+        // Draw dragging tool on top
+        if (this.draggingTool && this.draggingTool.dragging) {
+          ctx.globalAlpha = 0.85;
+          GFX.drawToolIcon(ctx, this.draggingTool.x, this.draggingTool.y, this.draggingTool.name, 2);
+          ctx.globalAlpha = 1;
+        }
       }
 
       // Sparkles
@@ -988,6 +1128,61 @@
       ctx.restore();
     },
 
+    _useSurgeryTool(t) {
+      t.used = true;
+      t.dragging = false;
+      this.draggingTool = null;
+      this.dropZoneHover = false;
+      this.surgeryProgress++;
+      this.step++;
+      Engine.sfxTap();
+      for (let s = 0; s < 5; s++) {
+        this.sparkles.push({
+          x: W / 2 + (Math.random() - 0.5) * 60,
+          y: 240,
+          alpha: 1,
+          color: '#4ecdc4',
+          emoji: ['✨', '💫', '⭐'][Math.floor(Math.random() * 3)],
+        });
+      }
+      if (this.step >= this.patient.condition.surgerySteps.length) {
+        Engine.sfxSuccess();
+      }
+    },
+
+    // ── Drag & Drop ──
+    onDragStart(x, y) {
+      const steps = this.patient.condition.surgerySteps;
+      if (this.step >= steps.length) return null;
+      for (let i = 0; i < this.tools.length; i++) {
+        const t = this.tools[i];
+        if (!t.used && i === this.step && Engine.hitCircle(x, y, t.x, t.y, 35)) {
+          t.dragging = true;
+          this.draggingTool = t;
+          return t;
+        }
+      }
+      return null;
+    },
+
+    onDrag(target, x, y) {
+      target.x = x;
+      target.y = y;
+      this.dropZoneHover = Engine.hitRect(x, y, 40, 100, W - 80, 280);
+    },
+
+    onDrop(target, x, y) {
+      if (this.dropZoneHover && !target.used) {
+        this._useSurgeryTool(target);
+      } else {
+        target.x = target.originX;
+        target.y = target.originY;
+        target.dragging = false;
+        this.draggingTool = null;
+        this.dropZoneHover = false;
+      }
+    },
+
     onTap(x, y) {
       const steps = this.patient.condition.surgerySteps;
 
@@ -1001,23 +1196,10 @@
         return;
       }
 
-      // Tap the correct tool for current step
+      // Tap the correct tool (fallback)
       this.tools.forEach((t, i) => {
-        if (!t.used && i === this.step && Engine.hitCircle(x, y, t.x, t.y, 35)) {
-          Engine.sfxTap();
-          t.used = true;
-          this.surgeryProgress++;
-          this.step++;
-
-          // Sparkle effect
-          for (let s = 0; s < 5; s++) {
-            this.sparkles.push({
-              x: t.x + (Math.random() - 0.5) * 40,
-              y: t.y,
-              alpha: 1,
-              color: '#4ecdc4',
-              emoji: ['✨', '💫', '⭐'][Math.floor(Math.random() * 3)],
-            });
+        if (!t.used && !t.dragging && i === this.step && Engine.hitCircle(x, y, t.x, t.y, 35)) {
+          this._useSurgeryTool(t);
           }
 
           if (this.step >= steps.length) {

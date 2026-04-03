@@ -59,11 +59,15 @@ const Engine = (() => {
   // ── Input Handlers ──
   let downPos = null;
   let downTime = 0;
+  let lastMovePos = null;
+  let dragMoved = false;
 
   function onDown(sx, sy) {
     const p = toGame(sx, sy);
     downPos = p;
+    lastMovePos = p;
     downTime = performance.now();
+    dragMoved = false;
 
     // Check drag targets
     if (currentScene && currentScene.onDragStart) {
@@ -76,6 +80,11 @@ const Engine = (() => {
 
   function onMove(sx, sy) {
     const p = toGame(sx, sy);
+    lastMovePos = p;
+    if (downPos) {
+      const dx = p.x - downPos.x, dy = p.y - downPos.y;
+      if (dx * dx + dy * dy > 100) dragMoved = true;
+    }
     if (dragTarget && currentScene && currentScene.onDrag) {
       currentScene.onDrag(dragTarget, p.x, p.y);
     }
@@ -85,18 +94,20 @@ const Engine = (() => {
   }
 
   function onUp(sx, sy) {
-    const p = downPos || toGame(sx, sy);
+    const p = lastMovePos || downPos || toGame(sx, sy);
     if (dragTarget && currentScene && currentScene.onDrop) {
       currentScene.onDrop(dragTarget, p.x, p.y);
     }
-    // Tap detection (< 300ms and < 20px movement)
-    if (downPos && performance.now() - downTime < 300) {
+    // Tap detection (< 300ms and minimal movement)
+    if (downPos && !dragMoved && performance.now() - downTime < 400) {
       if (currentScene && currentScene.onTap) {
         currentScene.onTap(downPos.x, downPos.y);
       }
     }
     dragTarget = null;
     downPos = null;
+    lastMovePos = null;
+    dragMoved = false;
   }
 
   // ── Game Loop ──
