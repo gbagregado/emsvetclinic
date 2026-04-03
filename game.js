@@ -1240,11 +1240,6 @@
       this.tools.forEach((t, i) => {
         if (!t.used && !t.dragging && i === this.step && Engine.hitCircle(x, y, t.x, t.y, 35)) {
           this._useSurgeryTool(t);
-          }
-
-          if (this.step >= steps.length) {
-            Engine.sfxSuccess();
-          }
         }
       });
     },
