@@ -63,6 +63,9 @@ const Engine = (() => {
   let dragMoved = false;
 
   function onDown(sx, sy) {
+    // Resume AudioContext on first user gesture (browser autoplay policy)
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+
     const p = toGame(sx, sy);
     downPos = p;
     lastMovePos = p;

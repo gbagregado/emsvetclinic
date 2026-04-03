@@ -134,7 +134,7 @@
       // Check for save
       const saved = load();
       this.hasSave = !!saved;
-      Engine.bgmTitle();
+      this.bgmStarted = false;
     },
 
     update(dt) {
@@ -216,6 +216,11 @@
     },
 
     onTap(x, y) {
+      // Start BGM on first tap (browser autoplay policy)
+      if (!this.bgmStarted) {
+        this.bgmStarted = true;
+        if (Engine.isSoundEnabled()) Engine.bgmTitle();
+      }
       // Sound toggle
       if (Engine.hitRect(x, y, W - 55, 15, 42, 42)) {
         const on = Engine.toggleSound();
